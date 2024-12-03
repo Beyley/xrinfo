@@ -172,6 +172,9 @@ pub fn main() !void {
     defer enabled_extensions.deinit();
 
     var xdev_space = false;
+    var hand_tracking = false;
+    var eye_gaze_interaction = false;
+    var force_feedback_curl = false;
     for (supported_extensions) |*supported_extension| {
         const extension_name = std.mem.sliceTo(&supported_extension.extensionName, 0);
 
@@ -179,6 +182,15 @@ pub fn main() !void {
         if (std.mem.eql(u8, extension_name, c.XR_MNDX_XDEV_SPACE_EXTENSION_NAME)) {
             try enabled_extensions.append(c.XR_MNDX_XDEV_SPACE_EXTENSION_NAME);
             xdev_space = true;
+        } else if (std.mem.eql(u8, extension_name, c.XR_EXT_HAND_TRACKING_EXTENSION_NAME)) {
+            try enabled_extensions.append(c.XR_EXT_HAND_TRACKING_EXTENSION_NAME);
+            hand_tracking = true;
+        } else if (std.mem.eql(u8, extension_name, c.XR_EXT_EYE_GAZE_INTERACTION_EXTENSION_NAME)) {
+            try enabled_extensions.append(c.XR_EXT_EYE_GAZE_INTERACTION_EXTENSION_NAME);
+            eye_gaze_interaction = true;
+        } else if (std.mem.eql(u8, extension_name, c.XR_MNDX_FORCE_FEEDBACK_CURL_EXTENSION_NAME)) {
+            try enabled_extensions.append(c.XR_MNDX_FORCE_FEEDBACK_CURL_EXTENSION_NAME);
+            force_feedback_curl = true;
         }
     }
 
@@ -218,6 +230,21 @@ pub fn main() !void {
         addOutputToChain(&system_properties, &xdev_space_properties);
     }
 
+    if (hand_tracking) {
+        var hand_tracking_properties: c.XrSystemHandTrackingPropertiesEXT = .{ .type = c.XR_TYPE_SYSTEM_HAND_TRACKING_PROPERTIES_EXT };
+        addOutputToChain(&system_properties, &hand_tracking_properties);
+    }
+
+    if (eye_gaze_interaction) {
+        var eye_gaze_interaction_properties: c.XrSystemEyeGazeInteractionPropertiesEXT = .{ .type = c.XR_TYPE_SYSTEM_EYE_GAZE_INTERACTION_PROPERTIES_EXT };
+        addOutputToChain(&system_properties, &eye_gaze_interaction_properties);
+    }
+
+    if (force_feedback_curl) {
+        var force_feedback_curl_properties: c.XrSystemForceFeedbackCurlPropertiesMNDX = .{ .type = c.XR_TYPE_SYSTEM_FORCE_FEEDBACK_CURL_PROPERTIES_MNDX };
+        addOutputToChain(&system_properties, &force_feedback_curl_properties);
+    }
+
     try err(c.xrGetSystemProperties(instance, system_id, &system_properties));
 
     std.debug.print("Got OpenXR system\n\tID: {d}\n\tName: {s}\n\tVendor ID: {d}\n", .{
@@ -236,7 +263,19 @@ pub fn main() !void {
     });
 
     if (findOutputFromChain(c.XrSystemXDevSpacePropertiesMNDX, c.XR_TYPE_SYSTEM_XDEV_SPACE_PROPERTIES_MNDX, &system_properties)) |mndx_space_properties| {
-        std.debug.print("System XDEV Space Properties:\n\t{}\n", .{mndx_space_properties.supportsXDevSpace != 0});
+        std.debug.print("System XDEV Space Properties:\n\tSupports XDev Space: {}\n", .{mndx_space_properties.supportsXDevSpace != 0});
+    }
+
+    if (findOutputFromChain(c.XrSystemHandTrackingPropertiesEXT, c.XR_TYPE_SYSTEM_HAND_TRACKING_PROPERTIES_EXT, &system_properties)) |hand_tracking_properties| {
+        std.debug.print("System Hand Tracking Properties:\n\tSupports Hand Tracking: {}\n", .{hand_tracking_properties.supportsHandTracking != 0});
+    }
+
+    if (findOutputFromChain(c.XrSystemEyeGazeInteractionPropertiesEXT, c.XR_TYPE_SYSTEM_EYE_GAZE_INTERACTION_PROPERTIES_EXT, &system_properties)) |eye_gaze_interaction_properties| {
+        std.debug.print("System Eye Gaze Interaction Properties:\n\tSupports Eye Gaze Interaction: {}\n", .{eye_gaze_interaction_properties.supportsEyeGazeInteraction != 0});
+    }
+
+    if (findOutputFromChain(c.XrSystemForceFeedbackCurlPropertiesMNDX, c.XR_TYPE_SYSTEM_FORCE_FEEDBACK_CURL_PROPERTIES_MNDX, &system_properties)) |force_feedback_curl_properties| {
+        std.debug.print("System Force Feedback Curl Properties:\n\tSupports Force Feedback Curl: {}\n", .{force_feedback_curl_properties.supportsForceFeedbackCurl != 0});
     }
 
     try err(c.xrDestroyInstance(instance));
