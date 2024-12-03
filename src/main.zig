@@ -22,6 +22,27 @@ pub const XrVersion = packed struct(u64) {
     }
 };
 
+fn findOutputFromChain(comptime T: type, xr_type: c.XrStructureType, ptr: ?*anyopaque) ?*T {
+    var iter: ?*c.XrBaseOutStructure = @alignCast(@ptrCast(ptr));
+    while (iter) |base| {
+        if (base.type == xr_type)
+            return @ptrCast(iter);
+
+        iter = base.next;
+    }
+    return null;
+}
+
+fn addOutputToChain(chain: *anyopaque, ptr: *anyopaque) void {
+    var last: *c.XrBaseOutStructure = @alignCast(@ptrCast(chain));
+    var iter: ?*c.XrBaseOutStructure = last;
+    while (iter) |base| {
+        last = iter.?;
+        iter = base.next;
+    }
+    last.next = @alignCast(@ptrCast(ptr));
+}
+
 fn boundedStr(comptime len: comptime_int, str: [:0]const u8) ![len]u8 {
     var ret: [len]u8 = @splat(0);
 
@@ -33,7 +54,7 @@ fn boundedStr(comptime len: comptime_int, str: [:0]const u8) ![len]u8 {
 
 const app_version: XrVersion = .{ .major = 0, .minor = 1, .patch = 0 };
 
-pub fn enumerateExtensions(allocator: std.mem.Allocator, layer: ?[*:0]const u8, out: anytype) !void {
+pub fn enumerateExtensions(allocator: std.mem.Allocator, layer: ?[*:0]const u8, writer: anytype) ![]c.XrExtensionProperties {
     var extension_count: u32 = 0;
     try err(c.xrEnumerateInstanceExtensionProperties(layer, 0, &extension_count, null));
 
@@ -45,7 +66,7 @@ pub fn enumerateExtensions(allocator: std.mem.Allocator, layer: ?[*:0]const u8, 
     // The second xrEnumerateInstanceExtensionProperties call may not always return the same value as the first call! it writes how many its used, so let's slice to that
     const extensions = raw_extensions[0..extension_count];
 
-    if (extension_count == 0) return;
+    if (extension_count == 0) return &.{};
 
     if (layer) |api_layer|
         std.debug.print("API Layer {s} supports {d} extensions\n", .{ api_layer, extension_count })
@@ -53,7 +74,7 @@ pub fn enumerateExtensions(allocator: std.mem.Allocator, layer: ?[*:0]const u8, 
         std.debug.print("Runtime supports {d} extensions\n", .{extension_count});
 
     for (extensions, 0..) |extension, i| {
-        try out.print(
+        try writer.print(
             "\t[{d}] {s} (v{d})\n",
             .{
                 i,
@@ -62,6 +83,8 @@ pub fn enumerateExtensions(allocator: std.mem.Allocator, layer: ?[*:0]const u8, 
             },
         );
     }
+
+    return allocator.dupe(c.XrExtensionProperties, extensions);
 }
 
 pub fn main() !void {
@@ -99,13 +122,15 @@ pub fn main() !void {
             },
         );
 
-        try enumerateExtensions(allocator, layer_name, out);
+        allocator.free(try enumerateExtensions(allocator, layer_name, out));
 
         try out.writeByte('\n');
     }
 
-    try enumerateExtensions(allocator, null, out);
+    const supported_extensions = try enumerateExtensions(allocator, null, out);
+    defer allocator.free(supported_extensions);
 
+    // api version check
     const versions_to_try: []const XrVersion = &.{
         .{ .major = 1, .minor = 1, .patch = 0 },
         .{ .major = 1, .minor = 0, .patch = 0 },
@@ -143,6 +168,20 @@ pub fn main() !void {
         return;
     }
 
+    var enabled_extensions = std.ArrayList([*:0]const u8).init(allocator);
+    defer enabled_extensions.deinit();
+
+    var xdev_space = false;
+    for (supported_extensions) |*supported_extension| {
+        const extension_name = std.mem.sliceTo(&supported_extension.extensionName, 0);
+
+        // We can get extra info from OpenXR using this extension, if we enable it
+        if (std.mem.eql(u8, extension_name, c.XR_MNDX_XDEV_SPACE_EXTENSION_NAME)) {
+            try enabled_extensions.append(c.XR_MNDX_XDEV_SPACE_EXTENSION_NAME);
+            xdev_space = true;
+        }
+    }
+
     var instance: c.XrInstance = undefined;
     try err(c.xrCreateInstance(&.{
         .type = c.XR_TYPE_INSTANCE_CREATE_INFO,
@@ -151,12 +190,8 @@ pub fn main() !void {
             .applicationName = try boundedStr(128, "xrinfo"),
             .applicationVersion = 0,
         },
-        .enabledExtensionCount = 1,
-        // .enabledExtensionCount = 2,
-        .enabledExtensionNames = @as([*]const [*:0]const u8, &.{
-            "XR_MND_headless",
-            // "XR_EXT_active_action_set_priority",
-        }),
+        .enabledExtensionCount = @intCast(enabled_extensions.items.len),
+        .enabledExtensionNames = enabled_extensions.items.ptr,
     }, &instance));
 
     var instanceProperties: c.XrInstanceProperties = .{ .type = c.XR_TYPE_INSTANCE_PROPERTIES };
@@ -169,6 +204,40 @@ pub fn main() !void {
             @as(XrVersion, @bitCast(instanceProperties.runtimeVersion)),
         },
     );
+
+    var system_id: c.XrSystemId = undefined;
+    try err(c.xrGetSystem(instance, &.{
+        .formFactor = c.XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY,
+        .type = c.XR_TYPE_SYSTEM_GET_INFO,
+    }, &system_id));
+
+    var system_properties: c.XrSystemProperties = .{ .type = c.XR_TYPE_SYSTEM_PROPERTIES };
+
+    if (xdev_space) {
+        var xdev_space_properties: c.XrSystemXDevSpacePropertiesMNDX = .{ .type = c.XR_TYPE_SYSTEM_XDEV_SPACE_PROPERTIES_MNDX };
+        addOutputToChain(&system_properties, &xdev_space_properties);
+    }
+
+    try err(c.xrGetSystemProperties(instance, system_id, &system_properties));
+
+    std.debug.print("Got OpenXR system\n\tID: {d}\n\tName: {s}\n\tVendor ID: {d}\n", .{
+        system_properties.systemId,
+        std.mem.sliceTo(&system_properties.systemName, 0),
+        system_properties.vendorId,
+    });
+    std.debug.print("System Graphics Properties:\n\tMax Layer Count: {d}\n\tMax Swapchain Image Width: {d}\n\tMax Swapchain Image Height: {d}\n", .{
+        system_properties.graphicsProperties.maxLayerCount,
+        system_properties.graphicsProperties.maxSwapchainImageWidth,
+        system_properties.graphicsProperties.maxSwapchainImageHeight,
+    });
+    std.debug.print("System Tracking properties:\n\tOrientation Tracking: {}\n\tPosition Tracking: {}\n", .{
+        system_properties.trackingProperties.orientationTracking != 0,
+        system_properties.trackingProperties.positionTracking != 0,
+    });
+
+    if (findOutputFromChain(c.XrSystemXDevSpacePropertiesMNDX, c.XR_TYPE_SYSTEM_XDEV_SPACE_PROPERTIES_MNDX, &system_properties)) |mndx_space_properties| {
+        std.debug.print("System XDEV Space Properties:\n\t{}\n", .{mndx_space_properties.supportsXDevSpace != 0});
+    }
 
     try err(c.xrDestroyInstance(instance));
 }
