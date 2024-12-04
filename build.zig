@@ -4,11 +4,14 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    const openxr_sdk = b.dependency("OpenXR-SDK", .{});
+
     const translate_c = b.addTranslateC(.{
         .root_source_file = b.path("src/c.h"),
         .target = target,
         .optimize = optimize,
     });
+    translate_c.addIncludePath(openxr_sdk.path("include"));
 
     const exe = b.addExecutable(.{
         .name = "xrinfo",
@@ -19,6 +22,9 @@ pub fn build(b: *std.Build) void {
     });
     exe.linkSystemLibrary("openxr_loader");
     exe.root_module.addImport("c", translate_c.createModule());
+
+    if (target.result.os.tag == .windows and target.result.cpu.arch == .x86_64)
+        exe.addLibraryPath(b.path("libs/win64"));
 
     b.installArtifact(exe);
     const run_cmd = b.addRunArtifact(exe);
