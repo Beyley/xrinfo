@@ -1,10 +1,11 @@
 .{
-    .name = "xrinfo",
+    .name = .xrinfo,
     .version = "0.0.0",
+    .fingerprint = 0x3f6c73eb260a2ef3,
     .dependencies = .{
         .@"OpenXR-SDK" = .{
             .url = "git+https://github.com/KhronosGroup/OpenXR-SDK#781f2eab3698d653c804ecbd11e0aed47eaad1c6",
-            .hash = "122064ca6d2674dec7400953379f0205cc6ce1dae5f04b996c373d942fe61b457eaa",
+            .hash = "N-V-__8AAH6MOgBkym0mdN7HQAlTN58CBcxs4drl8EuZbDc9",
         },
     },
 
